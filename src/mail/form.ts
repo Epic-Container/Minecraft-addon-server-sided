@@ -159,4 +159,46 @@ function moneyClaim(player: Player, n: MailObj) {
 function itemForm(player: Player) {
   const mails = new Mail();
   const item = mails.receive(player.name, "item");
+
+  const f = new ActionFormData();
+  f.title("Item");
+  f.body("click your item");
+  for (const mail of item) {
+    const isRead = mail.read ? "§aread§r" : "§cunread§r";
+    f.button(`${mail.from} [${isRead}]`);
+  }
+  f.button("back");
+  f.button("delete all");
+  f.show(player).then(res => {
+    if (res.canceled) return;
+    const result = res.selection;
+    if (result < item.length) {
+      const mail = item[result];
+      mails.markAsRead(mail.id);
+      itemRes(mail, player);
+      return;
+    }
+    if (result === item.length) recieveForm(player);
+    if (result === item.length + 1) item.forEach(n => mails.delete(n.id));
+  })
+}
+
+function itemRes (mail: MailObj, player: Player) {
+  const f = new MessageFormData();
+  f.title(`${mail.from} [${mail.read ? "read" : "unread"}]`);
+  f.body(mail.desc);
+  f.button1("§a§lOK§r");
+  f.button2("§l§cDelete§r")
+  f.show(player).then(res => {
+    const result = res.selection;
+    if (res.canceled) return;
+    if (result === 0) {
+      itemForm(player);
+    }
+    if (result === 1) {
+      
+      itemForm(player);
+      new Mail().delete(mail.id);
+    }
+  })
 }
