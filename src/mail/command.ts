@@ -5,10 +5,10 @@ import {
   CustomCommandParamType,
   CustomCommandStatus,
   Player,
-  system
+  system,
 } from "@minecraft/server";
 import { recieveForm } from "./form";
-import Mail, { MailObj } from "./mail";
+import { sendForm } from "./sendForm";
 
 function main(origin: CustomCommandOrigin, method: string, playerName?: string) {
   const player = origin.sourceEntity;
@@ -24,16 +24,7 @@ function main(origin: CustomCommandOrigin, method: string, playerName?: string) 
         return;
       }
       
-      const msgMail: MailObj = {
-        from: player.name,
-        to: playerName,
-        type: "money",
-        desc: "i got u bro",
-        read: false,
-        date: Date.now()
-      }
-      const mail = new Mail();
-      mail.send(msgMail, player);
+      sendForm(player, playerName);
     }
   }
 

@@ -1,11 +1,14 @@
 import { system, world } from "@minecraft/server";
-import { JaylyDB } from "jaylydb/index.js";
+import { JaylyDB } from "../jaylydb/index.js";
 // player name -> transactions ID -> data
 const transactions = new Map();
 const playerIndex = new Map();
+let load = false;
 system.run(() => {
     const db = new JaylyDB("transactions", false);
     db.forEach((value, key) => {
+        if (typeof value !== "string")
+            return;
         const data = JSON.parse(value);
         transactions.set(key, data);
         // index from
@@ -17,6 +20,7 @@ system.run(() => {
             playerIndex.set(data.to, new Set());
         playerIndex.get(data.to).add(key);
     });
+    load = true;
 });
 export function generateId(length, salt) {
     const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";

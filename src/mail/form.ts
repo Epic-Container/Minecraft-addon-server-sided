@@ -1,8 +1,9 @@
-import { Player } from "@minecraft/server";
+import { Enchantment, EnchantmentType, ItemStack, ItemTypes, Player } from "@minecraft/server";
 import { ActionFormData, ActionFormResponse, MessageFormData } from "@minecraft/server-ui";
 import Mail, { MailObj } from "./mail";
-import Transaction from "money/transaction";
-import Score from "money/score";
+import Transaction from "../money/transaction";
+import Score from "../money/score";
+import { ItemUtils } from "./item";
 
 export function recieveForm(player: Player) {
   const f = new ActionFormData();
@@ -10,7 +11,6 @@ export function recieveForm(player: Player) {
   f.body("Select the type of mail you want to receive");
   f.button("Money");
   f.button("Item");
-  f.button("Tax");
   f.button("Message");
   f.show(player).then(res => {
     recieveRes(res, player);
@@ -27,9 +27,6 @@ function recieveRes(res: ActionFormResponse, player: Player) {
     itemForm(player);
   }
   if (result === 2) {
-
-  }
-  if (result === 3) {
     messageForm(player);
   }
 }
@@ -53,6 +50,7 @@ function messageForm(player: Player) {
     .then(res => {
       if (res.canceled) return;
       const result = res.selection;
+      if (result === undefined) return;
       if (result < message.length) {
         const mail = message[result]
         mails.markAsRead(mail.id);
@@ -66,7 +64,7 @@ function messageForm(player: Player) {
 function messageRes(mail: MailObj, player: Player) {
   const f = new MessageFormData();
   f.title(`${mail.from} [${mail.read ? "read" : "unread"}]`);
-  f.body(mail.desc);
+  f.body(`from: ${mail.from}\nto: ${mail.to}\ndesc: ${mail.desc}`);
   f.button1("§a§lOK§r");
   f.button2("§l§cDelete§r")
   f.show(player).then(res => {
@@ -99,24 +97,26 @@ function moneyForm(player: Player) {
   f.show(player).then(res => {
     if (res.canceled) return;
     const result = res.selection;
+
+    if (result === undefined) return;
+
     if (result < money.length) {
       const mail = money[result];
       moneyRes(mail, player);
-      mails.markAsRead(mail.id);
       return;
     }
     if (result === money.length) {
       recieveForm(player)
       return;
-    } 
+    }
     if (result === money.length + 1) {
       money.forEach(n => {
-        moneyClaim(player, n);
-        mails.delete(n.id);
+        if (!n.read) {
+          moneyClaim(player, n);
+        }
         mails.markAsRead(n.id);
+        mails.delete(n.id);
       })
-      recieveForm(player);
-      return;
     };
   })
 }
@@ -124,7 +124,7 @@ function moneyForm(player: Player) {
 function moneyRes(mail: MailObj, player: Player) {
   const f = new MessageFormData();
   f.title(`${mail.from} [${mail.read ? "Claimed" : "Unclaimed"}]`);
-  f.body(mail.desc);
+  f.body(`from: ${mail.from}\nto: ${mail.to}\namount: ${mail.contain}\nmessage: ${mail.desc}`);
   f.button1("§a§lClaim§r");
   f.button2("§l§cClaim and Delete§r")
   f.show(player).then(res => {
@@ -148,14 +148,15 @@ function moneyClaim(player: Player, n: MailObj) {
   const intParse = Number(n.contain);
   if (isNaN(intParse) || intParse <= 0) return;
   if (player.name !== n.to) return;
-  const transaction = new Transaction(n.from, n.to, intParse);
+
+  const mails = new Mail();
   const score = new Score(player, "money", "Money");
 
-  transaction.record("Transfer Money");
+  mails.markAsRead(n.id);
   score.add(intParse);
 }
 
-//* ITEM FORM */
+//* ITEM FORM */ 
 function itemForm(player: Player) {
   const mails = new Mail();
   const item = mails.receive(player.name, "item");
@@ -172,33 +173,82 @@ function itemForm(player: Player) {
   f.show(player).then(res => {
     if (res.canceled) return;
     const result = res.selection;
+
+    if (result === undefined) return;
+
     if (result < item.length) {
       const mail = item[result];
-      mails.markAsRead(mail.id);
       itemRes(mail, player);
       return;
     }
-    if (result === item.length) recieveForm(player);
-    if (result === item.length + 1) item.forEach(n => mails.delete(n.id));
+
+    if (result === item.length) recieveForm(player); //Back
+    if (result === item.length + 1) {
+      const itemUtils = new ItemUtils();
+
+      item.forEach(n => {
+        if (n.read || !n.contain) return;
+
+        const itemStack = itemUtils.parseItem(n.contain);
+        if (!itemStack || itemStack.amount <= 0) return;
+
+        itemUtils.addItem(itemStack, player);
+      });
+
+      item.forEach(n => {
+        mails.delete(n.id);
+      });
+
+      player.sendMessage("§aAll items claimed & deleted");
+    }
   })
 }
 
-function itemRes (mail: MailObj, player: Player) {
+function itemRes(mail: MailObj, player: Player) {
+  if (!mail.contain) return;
+
+  const itemUtils = new ItemUtils();
+  const itemStack = itemUtils.parseItem(mail.contain);
+  if (!itemStack || itemStack.amount <= 0) return;
+
+  const mails = new Mail();
+
+  const name = itemStack.typeId.replace("minecraft:", "");
+
   const f = new MessageFormData();
   f.title(`${mail.from} [${mail.read ? "read" : "unread"}]`);
-  f.body(mail.desc);
-  f.button1("§a§lOK§r");
-  f.button2("§l§cDelete§r")
+  f.body(`${mail.desc}\n§e${name} x${itemStack.amount}`);
+  f.button1("§a§lClaim§r");
+  f.button2("§l§cClaim and Delete§r");
+
   f.show(player).then(res => {
-    const result = res.selection;
     if (res.canceled) return;
+
+    const result = res.selection;
+
+
     if (result === 0) {
-      itemForm(player);
+      // Anti dupe
+      if (mail.read) {
+        player.sendMessage("§cAlready claimed");
+        itemForm(player);
+        return;
+      }
+      itemUtils.addItem(itemStack, player);
+      mails.markAsRead(mail.id);
     }
+
     if (result === 1) {
-      
-      itemForm(player);
-      new Mail().delete(mail.id);
+      mails.delete(mail.id);
+      // Anti dupe
+      if (mail.read) {
+        player.sendMessage("§cAlready claimed");
+        itemForm(player);
+        return;
+      }
+      itemUtils.addItem(itemStack, player);
     }
-  })
+
+    itemForm(player);
+  });
 }

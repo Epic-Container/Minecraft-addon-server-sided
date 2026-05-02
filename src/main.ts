@@ -547,7 +547,7 @@ world.afterEvents.pistonActivate.subscribe((event) => {
 
       // 🚨 CROSS BORDER DETECTED
       if (wasInside !== willBeInside) {
-        piston.block.setType("minecraft:air");
+        piston.block.dimension.runCommand(`setblock ${piston.block.location.x} ${piston.block.location.y} ${piston.block.location.z} minecraft:air`);
         return;
       }
     }

@@ -1,11 +1,12 @@
 import { Player, system, world } from "@minecraft/server";
-import { JaylyDB } from "jaylydb/index.js";
-import { generateId } from "money/transaction";
+import { JaylyDB } from "../jaylydb/index.js";
+import { generateId } from "../money/transaction";
+import { Inventory } from "./inventory.js";
 
 type typeMail = "money" | "item" | "tax" | "message"
 export interface MailObj {
   to: string;
-  id?: string;
+  id: string;
   from: string;
   desc: string;
   date: number;
@@ -25,7 +26,8 @@ let isLoaded = false;
 system.run(() => {
   const db = new JaylyDB("Mail", false);
 
-  const loadingFunc = (value: string, key: string) => {
+  const loadingFunc = (value: string | number | boolean, key: string) => {
+    if (typeof value !== "string") return;
     const data: MailObj = JSON.parse(value);
     cache.set(key, data);
     // indexing from
@@ -46,6 +48,7 @@ system.run(() => {
 class Mail {
   public send(mail: MailObj, player: Player) {
     const db = new JaylyDB("Mail", false);
+
     const id = generateId(10, mail.type);
     const toLower = mail.to.toLowerCase()
     const fromLower = mail.from.toLowerCase()
@@ -171,7 +174,7 @@ export default Mail;
 
 world.afterEvents.playerJoin.subscribe((event) => {
   const playerName = event.playerName;
-  setOfPlayerName.add(playerName)
+  setOfPlayerName.add(playerName);
 })
 
 world.afterEvents.playerSpawn.subscribe((event) => {
@@ -207,7 +210,6 @@ world.afterEvents.itemUse.subscribe((e) =>{
   const item = e.itemStack
 
   if (item.typeId === "minecraft:emerald") {
-    const db = new JaylyDB("Mail", false);
-    db.clear()
+
   }
 })

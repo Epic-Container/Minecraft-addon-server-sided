@@ -1,6 +1,6 @@
 import { system, world } from "@minecraft/server";
-import { JaylyDB } from "jaylydb/index.js";
-import { generateId } from "money/transaction";
+import { JaylyDB } from "../jaylydb/index.js";
+import { generateId } from "../money/transaction";
 // id -> MailObj
 const cache = new Map();
 // player name -> Set of id
@@ -11,6 +11,8 @@ let isLoaded = false;
 system.run(() => {
     const db = new JaylyDB("Mail", false);
     const loadingFunc = (value, key) => {
+        if (typeof value !== "string")
+            return;
         const data = JSON.parse(value);
         cache.set(key, data);
         // indexing from

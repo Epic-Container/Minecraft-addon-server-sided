@@ -1,6 +1,6 @@
-import { CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus, Player, system } from "@minecraft/server";
+import { CommandPermissionLevel, CustomCommandParamType, CustomCommandStatus, Player, system, } from "@minecraft/server";
 import { recieveForm } from "./form";
-import Mail from "./mail";
+import { sendForm } from "./sendForm";
 function main(origin, method, playerName) {
     const player = origin.sourceEntity;
     if (!(player instanceof Player))
@@ -10,16 +10,11 @@ function main(origin, method, playerName) {
             recieveForm(player);
         }
         if (method === "send") {
-            const msgMail = {
-                from: player.name,
-                to: playerName,
-                type: "money",
-                desc: "i got u bro",
-                read: false,
-                date: Date.now()
-            };
-            const mail = new Mail();
-            mail.send(msgMail, player);
+            if (!playerName) {
+                player.sendMessage("§cName is required");
+                return;
+            }
+            sendForm(player, playerName);
         }
     };
     system.run(handler);

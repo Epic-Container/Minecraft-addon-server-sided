@@ -1,5 +1,5 @@
 import { system, world } from "@minecraft/server";
-import { JaylyDB } from "jaylydb/index.js";
+import { JaylyDB } from "../jaylydb/index.js";
 
 interface Data {
   from: string;
@@ -16,7 +16,8 @@ const playerIndex: Map<string, Set<string>> = new Map();
 let load = false;
 system.run(() => {
   const db = new JaylyDB("transactions", false);
-  db.forEach((value: string, key: string) => {
+  db.forEach((value, key: string) => {
+    if (typeof value !== "string") return;
     const data: Data = JSON.parse(value);
 
     transactions.set(key, data);
