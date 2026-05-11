@@ -1,4 +1,4 @@
-import { ItemStack, Player, world, EnchantmentType } from "@minecraft/server";
+import { ItemStack, Player, world, EnchantmentType, } from "@minecraft/server";
 export class ItemUtils {
     constructor(fromPlr) {
         this.fromPlr = fromPlr;
@@ -11,12 +11,17 @@ export class ItemUtils {
         catch (e) {
             return;
         }
-        const itemStack = new ItemStack(data.type, data.amount ?? 1);
+        const itemStack = new ItemStack(data.type, 1); // template, amount selalu 1
+        // ⚠️ JANGAN set amount ke data.amount di sini
+        // itemStack.amount = data.amount ?? 1;
         this.setDurability(itemStack, data.damage);
         this.setEnchants(itemStack, data.enchants);
         itemStack.nameTag = data.nameTag;
         itemStack.setLore(data.lore);
-        return itemStack;
+        return {
+            itemStack,
+            totalAmount: data.amount ?? 1, // total amount asli dari frontend
+        };
     }
     itemStringfy(item, amount) {
         if (!item)
@@ -34,7 +39,7 @@ export class ItemUtils {
         };
         return JSON.stringify(data);
     }
-    addItem(item, toPlr) {
+    addItem(itemTemplate, totalAmount, toPlr) {
         let player;
         if (toPlr instanceof Player) {
             player = toPlr;
@@ -48,58 +53,109 @@ export class ItemUtils {
         const container = player.getComponent("minecraft:inventory")?.container;
         if (!container)
             return;
-        if (container.emptySlotsCount > 0) {
-            container.addItem(item);
-        }
-        else {
-            player.dimension.spawnItem(item, player.location);
+        let remaining = totalAmount; // gunakan total amount asli
+        const max = itemTemplate.maxAmount;
+        while (remaining > 0) {
+            const giveAmount = Math.min(remaining, max);
+            const newItem = itemTemplate.clone();
+            newItem.amount = giveAmount; // baru sekarang set amount per stack
+            if (container.emptySlotsCount > 0) {
+                const leftover = container.addItem(newItem);
+                if (leftover) {
+                    player.dimension.spawnItem(leftover, player.location);
+                }
+            }
+            else {
+                player.dimension.spawnItem(newItem, player.location);
+            }
+            remaining -= giveAmount;
         }
     }
-    isValidAmount(item, amount, toPlr) {
+    isValidAmountExact(itemSpec, toPlr) {
+        // ambil player
         let player;
         if (toPlr instanceof Player) {
             player = toPlr;
         }
         else {
-            const getPlayer = world.getPlayers({ name: toPlr });
-            if (!getPlayer.length)
+            const result = world.getPlayers({ name: toPlr });
+            if (!result.length)
                 return false;
-            player = getPlayer[0];
+            player = result[0];
         }
         const container = player.getComponent("minecraft:inventory")?.container;
         if (!container)
             return false;
-        const itemMap = new Map();
+        // generate fingerprint dari spesifikasi
+        const targetFingerprint = JSON.stringify({
+            type: itemSpec.type,
+            nameTag: itemSpec.nameTag,
+            lore: itemSpec.lore,
+            enchants: itemSpec.enchants
+                .slice() // jangan mutate array asli
+                .sort((a, b) => a.type.localeCompare(b.type)),
+            damage: itemSpec.damage,
+        });
+        let totalAmount = 0;
         for (let i = 0; i < container.size; i++) {
-            const item = container.getItem(i);
-            if (!item)
+            const slotItem = container.getItem(i);
+            if (!slotItem)
                 continue;
-            if (itemMap.has(item.typeId)) {
-                const oldAmount = itemMap.get(item.typeId) ?? 0;
-                const newAmount = item.amount + oldAmount;
-                itemMap.set(item.typeId, newAmount);
-            }
-            else {
-                itemMap.set(item.typeId, item.amount);
+            const slotFingerprint = this.getItemFingerprint(slotItem);
+            if (slotFingerprint === targetFingerprint) {
+                totalAmount += slotItem.amount;
             }
         }
-        const amountItem = itemMap.get(item) ?? 0;
-        return amountItem >= amount;
+        return totalAmount >= itemSpec.amount;
     }
-    removeItem(itemTypeId, amount, toPlr) {
+    removeItemExact(itemSpec, toPlr) {
+        // ambil player
         let player;
         if (toPlr instanceof Player) {
             player = toPlr;
         }
         else {
-            const getPlayer = world.getPlayers({ name: toPlr });
-            if (!getPlayer.length)
-                return;
-            player = getPlayer[0];
+            const result = world.getPlayers({ name: toPlr });
+            if (!result.length)
+                return false;
+            player = result[0];
         }
-        if (!this.isValidAmount(itemTypeId, amount, toPlr))
-            return;
-        player.runCommand(`clear @s ${itemTypeId} 0 ${amount}`);
+        if (!this.isValidAmountExact(itemSpec, toPlr))
+            return false;
+        const container = player.getComponent("minecraft:inventory")?.container;
+        if (!container)
+            return false;
+        const targetFingerprint = JSON.stringify({
+            type: itemSpec.type,
+            nameTag: itemSpec.nameTag,
+            lore: itemSpec.lore,
+            enchants: itemSpec.enchants
+                .slice()
+                .sort((a, b) => a.type.localeCompare(b.type)),
+            damage: itemSpec.damage,
+        });
+        let remaining = itemSpec.amount;
+        for (let i = container.size - 1; i >= 0 && remaining > 0; i--) {
+            const slotItem = container.getItem(i);
+            if (!slotItem)
+                continue;
+            const slotFingerprint = this.getItemFingerprint(slotItem);
+            if (slotFingerprint !== targetFingerprint)
+                continue;
+            const amountInSlot = slotItem.amount;
+            if (amountInSlot <= remaining) {
+                // buang seluruh stack di slot ini
+                container.setItem(i, undefined);
+                remaining -= amountInSlot;
+            }
+            else {
+                // kurangi sebagian
+                slotItem.amount = amountInSlot - remaining;
+                container.setItem(i, slotItem);
+                remaining = 0;
+            }
+        }
+        return remaining === 0; // true jika semua jumlah berhasil dihapus
     }
     /**
      * Returns an array of Enchantment objects from the given ItemStack.
@@ -115,7 +171,7 @@ export class ItemUtils {
         return enchantments.map((enchant) => {
             return {
                 type: enchant.type.id,
-                level: enchant.level
+                level: enchant.level,
             };
         });
     }
@@ -133,7 +189,7 @@ export class ItemUtils {
         enchants.forEach((enchant) => {
             enchantment.push({
                 type: new EnchantmentType(enchant.type),
-                level: enchant.level
+                level: enchant.level,
             });
         });
         enchantComp.addEnchantments(enchantment);
@@ -171,5 +227,21 @@ export class ItemUtils {
     getItemNameTag(item) {
         const nametag = item.nameTag ? item.nameTag : "";
         return nametag;
+    }
+    getItemFingerprint(item) {
+        const enchants = this.getEnchants(item)
+            // urutkan agar urutan enchant tidak mempengaruhi
+            .sort((a, b) => a.type.localeCompare(b.type));
+        const data = {
+            type: item.typeId,
+            nameTag: this.getItemNameTag(item),
+            lore: item.getLore(),
+            enchants: enchants,
+            damage: this.damageDurability(item),
+        };
+        return JSON.stringify(data);
+    }
+    getPublicFingerprint(item) {
+        return this.getItemFingerprint(item);
     }
 }

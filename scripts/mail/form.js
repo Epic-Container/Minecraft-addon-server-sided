@@ -184,9 +184,9 @@ function itemForm(player) {
                 if (n.read || !n.contain)
                     return;
                 const itemStack = itemUtils.parseItem(n.contain);
-                if (!itemStack || itemStack.amount <= 0)
+                if (!itemStack || itemStack.totalAmount <= 0)
                     return;
-                itemUtils.addItem(itemStack, player);
+                itemUtils.addItem(itemStack.itemStack, itemStack.totalAmount, player);
             });
             item.forEach(n => {
                 mails.delete(n.id);
@@ -200,13 +200,13 @@ function itemRes(mail, player) {
         return;
     const itemUtils = new ItemUtils();
     const itemStack = itemUtils.parseItem(mail.contain);
-    if (!itemStack || itemStack.amount <= 0)
+    if (!itemStack || itemStack.totalAmount <= 0)
         return;
     const mails = new Mail();
-    const name = itemStack.typeId.replace("minecraft:", "");
+    const name = itemStack.itemStack.typeId.replace("minecraft:", "");
     const f = new MessageFormData();
     f.title(`${mail.from} [${mail.read ? "read" : "unread"}]`);
-    f.body(`${mail.desc}\n§e${name} x${itemStack.amount}`);
+    f.body(`${mail.desc}\n§e${name} x${itemStack.totalAmount}`);
     f.button1("§a§lClaim§r");
     f.button2("§l§cClaim and Delete§r");
     f.show(player).then(res => {
@@ -220,7 +220,7 @@ function itemRes(mail, player) {
                 itemForm(player);
                 return;
             }
-            itemUtils.addItem(itemStack, player);
+            itemUtils.addItem(itemStack.itemStack, itemStack.totalAmount, player);
             mails.markAsRead(mail.id);
         }
         if (result === 1) {
@@ -231,7 +231,7 @@ function itemRes(mail, player) {
                 itemForm(player);
                 return;
             }
-            itemUtils.addItem(itemStack, player);
+            itemUtils.addItem(itemStack.itemStack, itemStack.totalAmount, player);
         }
         itemForm(player);
     });

@@ -1,5 +1,5 @@
 import Mail, { MailObj } from "./mail";
-import { ItemUtils } from "./item";
+import { ItemUtils, itemObj } from "./item";
 import { ModalFormData, ActionFormData } from "@minecraft/server-ui";
 import { ItemStack, Player } from "@minecraft/server";
 import Transaction from "../money/transaction";
@@ -107,52 +107,70 @@ function sendMoney(player: Player, target: string) {
 
 function sendItem(player: Player, target: string) {
   const itemUtils = new ItemUtils();
-
   const invent = player.getComponent("minecraft:inventory");
   if (!invent) return;
-
   const container = invent.container;
 
-  type StoredItem = {
-    item: ItemStack;
-    slot: number;
-  };
+  interface StoredItem {
+    item: ItemStack;          // template (stackable: jumlah total; non-stackable: 1)
+    fingerprint: string;
+    slots: number[];
+    totalAmount: number;
+  }
 
-  const items: { [key: string]: StoredItem } = {};
+  const groups: { [key: string]: StoredItem } = {};
 
+  // Bangun grup berdasarkan fingerprint
   for (let i = 0; i < container.size; i++) {
     const item = container.getItem(i);
     if (!item) continue;
 
-    // 🔴 NON-stackable
     if (item.maxAmount === 1) {
+      // Non-stackable → tiap slot dianggap unik
       const key = `${item.typeId}_${i}`;
-      items[key] = {
+      const fp = itemUtils.getPublicFingerprint(item);
+      groups[key] = {
         item: item.clone(),
-        slot: i
+        fingerprint: fp,
+        slots: [i],
+        totalAmount: 1,
       };
       continue;
     }
 
-    // 🟢 stackable
-    if (items[item.typeId]) {
-      items[item.typeId].item.amount += item.amount;
+    // Stackable → gabungkan berdasarkan fingerprint
+    const fp = itemUtils.getPublicFingerprint(item);
+    if (groups[fp]) {
+      groups[fp].item.amount += item.amount;
+      groups[fp].slots.push(i);
+      groups[fp].totalAmount += item.amount;
     } else {
-      items[item.typeId] = {
+      groups[fp] = {
         item: item.clone(),
-        slot: i // ini cuma slot pertama (nanti remove pakai clear boleh)
+        fingerprint: fp,
+        slots: [i],
+        totalAmount: item.amount,
       };
     }
   }
 
-  const keys = Object.keys(items);
-  if (keys.length === 0) {
+  const groupKeys = Object.keys(groups);
+  if (groupKeys.length === 0) {
     player.sendMessage("§cYou don't have any item");
     return;
   }
-  const keyAndAmount = keys.map((key, index) => {
-    const item = items[key];
-    return `${index + 1}. ${item.item.typeId.replace("minecraft:", "")} (${item.item.amount})`;
+
+  // Siapkan label dropdown dengan detail
+  const keyAndAmount = groupKeys.map((key, index) => {
+    const g = groups[key];
+    const typeName = g.item.typeId.replace("minecraft:", "");
+    let details = "";
+    if (g.item.nameTag) details += ` "${g.item.nameTag}"`;
+    const enchants = itemUtils.getEnchants(g.item);
+    if (enchants.length > 0) {
+      details += ` [${enchants.map(e => `${e.type}:${e.level}`).join(", ")}]`;
+    }
+    return `${index + 1}. ${typeName}${details} (${g.totalAmount})`;
   });
 
   const f = new ModalFormData();
@@ -162,18 +180,17 @@ function sendItem(player: Player, target: string) {
   f.dropdown("Choose item", keyAndAmount);
   f.textField("Amount", "Type amount");
 
-  f.show(player).then(e => {
+  f.show(player).then((e) => {
     if (e.canceled || !e.formValues) return;
 
     const desc = e.formValues[1];
     const itemIndex = e.formValues[2];
     const amountStr = e.formValues[3];
 
-    if (typeof desc !== "string" || desc === "") {
+    if (typeof desc !== "string" || desc.trim() === "") {
       player.sendMessage("§cInvalid description");
       return;
     }
-
     if (typeof itemIndex !== "number") {
       player.sendMessage("§cInvalid item");
       return;
@@ -185,31 +202,57 @@ function sendItem(player: Player, target: string) {
       return;
     }
 
-    const selectedKey = keys[itemIndex];
-    const selectedItem = items[selectedKey];
+    const selectedKey = groupKeys[itemIndex];
+    const selectedGroup = groups[selectedKey];
 
-    if (!itemUtils.isValidAmount(selectedItem.item.typeId, amount, player)) {
-      player.sendMessage("§cYou don't have enough item");
+    // Non-stackable hanya boleh jumlah 1
+    if (selectedGroup.item.maxAmount === 1 && amount !== 1) {
+      player.sendMessage("§cNon-stackable items can only be sent as 1.");
       return;
     }
 
-    const selected = items[selectedKey];
-
-    // 🔴 NON-stackable → remove by slot
-    if (selected.item.maxAmount === 1) {
-      container.setItem(selected.slot, undefined);
+    // Penghapusan item
+    if (selectedGroup.item.maxAmount === 1) {
+      // Hapus langsung dari slot
+      const slot = selectedGroup.slots[0];
+      const currentItem = container.getItem(slot);
+      if (!currentItem || itemUtils.getPublicFingerprint(currentItem) !== selectedGroup.fingerprint) {
+        player.sendMessage("§cItem has changed or moved.");
+        return;
+      }
+      container.setItem(slot, undefined);
     } else {
-      // 🟢 stackable → boleh pakai sistem lama
-      itemUtils.removeItem(selected.item.typeId, amount, player);
+      // Stackable: validasi & hapus eksak
+      const itemSpec: itemObj = {
+        type: selectedGroup.item.typeId,
+        amount: amount,
+        nameTag: selectedGroup.item.nameTag ?? "",
+        lore: selectedGroup.item.getLore(),
+        enchants: itemUtils.getEnchants(selectedGroup.item),
+        damage: itemUtils.damageDurability(selectedGroup.item),
+      };
+
+      if (!itemUtils.isValidAmountExact(itemSpec, player)) {
+        player.sendMessage("§cYou don't have enough of that exact item.");
+        return;
+      }
+
+      const removeSuccess = itemUtils.removeItemExact(itemSpec, player);
+      if (!removeSuccess) {
+        player.sendMessage("§cFailed to remove item (inventory changed?).");
+        return;
+      }
     }
 
+    // Serialisasi & kirim mail
+    const sendAmount = selectedGroup.item.maxAmount === 1 ? 1 : amount;
+    const serialized = itemUtils.itemStringfy(selectedGroup.item, sendAmount);
+    if (!serialized) {
+      player.sendMessage("§cSerialization error.");
+      return;
+    }
 
-    const serialize = itemUtils.itemStringfy(selectedItem.item, amount);
-    if (!serialize) return;
-
-    const mails = new Mail();
-
-    const mailObject: MailObj = {
+    const mailObj: MailObj = {
       date: Date.now(),
       desc: desc,
       from: player.name,
@@ -217,10 +260,10 @@ function sendItem(player: Player, target: string) {
       read: false,
       to: target,
       type: "item",
-      contain: serialize
+      contain: serialized,
     };
 
-    mails.send(mailObject, player);
+    new Mail().send(mailObj, player);
     player.sendMessage(`§aItem sent to ${target} successfully`);
   });
 }
