@@ -2,6 +2,7 @@ import {
   EntityDamageCause,
   EntityDamageSource,
   Player,
+  system,
   world,
 } from "@minecraft/server";
 
@@ -31,8 +32,8 @@ world.afterEvents.entityHurt.subscribe((event) => {
   if (exception(source)) return;
 
   removeOldTag(player);
-
-  player.addTag(`CombatLock-${Date.now()}`);
+  const tick = system.currentTick
+  player.addTag(`CombatLock-${tick}`);
 });
 
 function exception(source: EntityDamageSource) {
@@ -59,9 +60,9 @@ function removeOldTag(player: Player) {
 export function isCombatLocked(player: Player) {
   const tags = player.getTags();
   const combatLock = tags.find((tag) => tag.startsWith("CombatLock-"));
-  const now = Date.now();
+  const now = system.currentTick;
   const then = Number(combatLock?.split("-")[1]);
 
-  const status = now - then < 10000 ? true : false;
+  const status = now - then < 200 ? true : false;
   return status;
 }
