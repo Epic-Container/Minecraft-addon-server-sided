@@ -33,6 +33,12 @@ function main(origin: CustomCommandOrigin, method: string, targetName?: string, 
         return;
       }
       const targetPlayer = world.getAllPlayers().find((p) => p.name === targetName);
+      
+      if (!targetPlayer) {
+        player.sendMessage("§cPlayer not found");
+        return;
+      }
+      
       const to = new Score(targetPlayer, "money", "Money");
       const transaction = new Transaction(player.name, targetName, amount);
       
